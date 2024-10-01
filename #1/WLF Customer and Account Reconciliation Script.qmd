@@ -1,0 +1,107 @@
+---
+title: "WLF Customer_Account Reconciliation"
+format: html
+editor: visual
+---
+
+## Quarto Document
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| 
+if(!interactive()){
+library(tidyverse)
+ }
+```
+
+## Reading in Core Data from RL 19
+
+```{r}
+core_data_loans = readxl::read_excel(path = here::here("./data/raw/Core/19 - Loan.xlsx"),
+                                     col_types = "text") %>% janitor::clean_names() %>% filter(account_closed_date == '0') %>% mutate(ssn_number_tax_id = as.numeric(ssn_number_tax_id))
+
+
+core_data_savings = readxl::read_excel(path = here::here("./data/raw/Core/19 - SAVINGS.xlsx"),
+                                     col_types = "text") %>% janitor::clean_names() %>% filter(is.na(account_closed_date)) %>% mutate(ssn_number_tax_id = as.numeric(ssn_number_tax_id),)
+
+core_data_time = readxl::read_excel(path = here::here("./data/raw/Core/19 - Time.xlsx"),
+                                     col_types = "text") %>% janitor::clean_names() %>% filter(account_closed_date == '0') %>% mutate(ssn_number_tax_id = as.numeric(ssn_number_tax_id),)
+
+core_data_DDA = readxl::read_excel(path = here::here("./data/raw/Core/19 -DDA.xlsx"),
+                                     col_types = "text") %>% janitor::clean_names() %>% filter(is.na(account_closed_date)) %>% mutate(ssn_number_tax_id = as.numeric(ssn_number_tax_id),)
+
+```
+
+## Reading in Model Data from from  Batch Uploads
+
+```{r}
+model_data_ofac = readxl::read_excel(
+  path = here::here("./data/prepd/Model/daily_ofac.xlsx"),
+  col_types = "text"
+) %>% mutate(screening_date = as.Date(as.numeric(screening_date), origin = "1899-12-30"),
+             ssn = as.numeric(ssn)) %>% janitor::clean_names()
+```
+
+## Reading in Model FCRM Customer and Account Data from RL 21 and RL22
+
+```{r}
+model_data_fcrm_acct = read_csv(
+  "./data/raw/Model/21 - FCRM-Data set for Accounts as of the end of the review period (12-31-2023).csv"
+) %>% janitor::clean_names()
+
+custom_col_names = c("customer_number","name","time")
+model_data_fcrm_cust = read_csv("./data/raw/Model/21 - FCRM-Data set for Customers as of 12-31-2023.csv",col_names = custom_col_names ) %>% janitor::clean_names()
+
+```
+
+## Creating Screening Graph for FIS Daily OFAC Data set
+
+```{r}
+model_data_ofac.summary = model_data_ofac %>% 
+  count(screening_date) %>% 
+  complete(screening_date = seq.Date(from = min(screening_date, na.rm = TRUE), to = max(screening_date, na.rm = TRUE), by = "day")) %>% 
+  mutate(dow = weekdays(screening_date), 
+         n = ifelse(is.na(n), 0, n))
+
+pp = model_data_ofac.summary %>% 
+  ungroup() %>% 
+  ggplot(aes(x = screening_date, y = n, text = dow)) +
+  geom_bar(stat = "identity") 
+
+plotly::ggplotly(pp)
+```
+
+## Reconciliation for FCRM Customer/Account
+
+Conducted reconciliation on accounts using account number and then used the customer number for customer and accounts.
+
+```{r}
+#Accounts
+core_data_loans$.aid_in_model = core_data_loans$account_no %in% model_data_fcrm_acct$.account_nr
+discrepancies_fcrm_loan_account = core_data_loans %>% dplyr::filter(!.aid_in_model)
+
+core_data_savings$.aid_in_model = core_data_savings$account_no %in% model_data_fcrm_acct$.account_nr
+discrepancies_fcrm_savings_account = core_data_savings %>% dplyr::filter(!.aid_in_model)
+
+core_data_time$.aid_in_model = core_data_time$account_no %in% model_data_fcrm_acct$.account_nr
+discrepancies_fcrm_time_account = core_data_time %>% dplyr::filter(!.aid_in_model)
+
+core_data_DDA$.aid_in_model = core_data_DDA$account_no %in% model_data_fcrm_acct$.account_nr
+discrepancies_fcrm_DDA_account = core_data_DDA %>% dplyr::filter(!.aid_in_model)
+
+#Customer
+core_data_loans$.cid_in_model = core_data_loans$account_no %in% model_data_fcrm_cust$customer_number
+discrepancies_fcrm_loan_customer = core_data_loans %>% dplyr::filter(!.cid_in_model)
+
+core_data_savings$.cid_in_model = core_data_savings$account_no %in% model_data_fcrm_cust$customer_number
+discrepancies_fcrm_savings_customer = core_data_savings %>% dplyr::filter(!.cid_in_model)
+
+core_data_time$.cid_in_model = core_data_time$account_no %in% model_data_fcrm_cust$customer_number
+discrepancies_fcrm_time_customer = core_data_time %>% dplyr::filter(!.cid_in_model)
+
+core_data_DDA$.cid_in_model = core_data_DDA$account_no %in% model_data_fcrm_cust$customer_number
+discrepancies_fcrm_DDA_customer = core_data_DDA %>% dplyr::filter(!.cid_in_model)
+
+```
