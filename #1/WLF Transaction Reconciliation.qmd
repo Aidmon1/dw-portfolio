@@ -1,0 +1,58 @@
+---
+title: "WLF Transaction Reconciliation"
+format: html
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| 
+if(!interactive()){
+library(tidyverse)
+ }
+```
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+Reads in the core and model data from Request Letter 20 & 21-22
+
+```{r}
+# reading in core transaction data --------
+
+#cashiers check 
+
+core_data_cashiercheck = read_csv(here::here("data/raw/Core/RL20 Core Transaction Data/20 - Core System-cashierck_moneyorder_Encore-2023.csv")) %>% janitor::clean_names() 
+
+core_data_cashiercheck$trans_date_time = core_data_cashiercheck$trans_date_time %>% format(core_data_cashiercheck$trans_date_time, scientific = FALSE)
+
+# core data system wire transactions 
+core_data_wire = read_csv(here::here("./data/raw/Core/RL20 Core Transaction Data/20 - Core System-Wire Transactions _PayPlus-2023.csv"
+)) %>% janitor::clean_names()
+
+# fcrm model data----
+model_data_fcrm = readxl::read_excel(path = here::here("./prepd-data/model/fcrm.xlsx"))
+```
+
+## Reconciliation with Unique Identifier in FCRM
+
+The only unique identifier that was in the FCRM model data was the "account_nr" field. RSM used this field as the primary key to find the transactions that were in the core and in the model. The identifier that is used for the core data is the "a_number" field. RSM notes that the core data identifier is insufficient and there is no one to one match.
+
+```{r}
+# transaction reconciliation cashierscheck
+core_data_cashiercheck$.aid_in_model = core_data_cashiercheck$a_number %in% model_data_fcrm$account_nr
+
+discrepancies_fcrm_cashiercheck = core_data_cashiercheck %>% dplyr::filter(!.aid_in_model)
+
+# transaction reconciliation wire
+
+core_data_wire$.aid_in_model = core_data_wire$a_number %in% model_data_fcrm$account_nr
+
+discrepancies_fcrm_wire = core_data_wire %>% dplyr::filter(!.aid_in_model)
+
+```
