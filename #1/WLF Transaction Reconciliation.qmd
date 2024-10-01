@@ -39,9 +39,9 @@ core_data_wire = read_csv(here::here("./data/raw/Core/RL20 Core Transaction Data
 model_data_fcrm = readxl::read_excel(path = here::here("./prepd-data/model/fcrm.xlsx"))
 ```
 
-## Reconciliation with Unique Identifier in FCRM
+## Reconciliation with Unique Identifier in Model
 
-The only unique identifier that was in the FCRM model data was the "account_nr" field. RSM used this field as the primary key to find the transactions that were in the core and in the model. The identifier that is used for the core data is the "a_number" field. RSM notes that the core data identifier is insufficient and there is no one to one match.
+The only unique identifier that was in the model data was the "account_nr" field. I used this field as the primary key to find the transactions that were in the core and in the model. The identifier that is used for the core data is the "a_number" field.
 
 ```{r}
 # transaction reconciliation cashierscheck
