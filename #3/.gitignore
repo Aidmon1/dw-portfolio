@@ -1,0 +1,44 @@
+# R-specific files
+*.Rhistory
+*.RData
+*.Rproj.user
+*.Renviron
+
+# Exclude all files in and downstream of the "./data/" directory
+/data/**
+
+
+# Exclude all non-lock RENV files
+/renv/** 
+
+# Common R-related files that should be ignored
+.Ruserdata
+.Rapp.history
+*.tar.gz
+
+# Ignore files created by Rmarkdown and Quarto
+*.nb.html
+*__Rnotebook.nb.html
+*_files/        # By default, Quarto outputs figure files to a _files directory
+*_cache/        # Quarto can also cache chunks in a _cache directory
+
+# Ignore files from R libraries and packages
+.Rproj
+NAMESPACE
+MAN/
+
+# Temporary files that might be generated during execution
+*~
+*.swp
+*.bak
+
+# Common document data-file extensions (case insensitive)
+*.[Rr][Dd][Ss]
+*.[Pp][Aa][Rr][Qq][Uu][Ee][Tt]
+*.[Cc][Ss][Vv]
+*.[Xx][Ll][Ss][Xx]
+*.[Xx][Ll][Ss]
+*.[Dd][Oo][Cc]
+*.[Dd][Oo][Cc][Xx]
+*.[Pp][Dd][Ff]
+.Rproj.user
