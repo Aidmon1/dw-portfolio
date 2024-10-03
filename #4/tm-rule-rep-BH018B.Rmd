@@ -1,0 +1,133 @@
+---
+title: "tm-rule-rep-BH018B"
+output: html_document
+date: "2024-06-12"
+---
+# Rule Code: BH018B 
+
+# Rule Title: Structured Transactions Weekly Scenario 
+
+# Rule Logic:
+
+Identify TINs conducting 2 or more individual Cash transactions ranging from $2,000.00 to $10,000.00, aggregating to $9,000.00 or more within the past 4 weeks
+
+
+```{r}
+# Start-up ----
+library(tidyverse)
+library(magrittr)
+library(skimr)
+library(readxl)
+
+```
+
+```{r, warning=FALSE}
+# Get Data ---- 
+
+# replicate 
+transaction_data = readRDS("C:/Users/E103986/.../.../data-work/data/prepd_abrigo-transaction-data.rds") %>% janitor::clean_names() # will need transaction amount from this data 
+
+# mini corrections 
+transaction_data = transaction_data %>%
+  mutate(created_date = as.Date(created_date),
+         tran_date = as.Date(tran_date),
+         acct_number = as.character(acct_number)) %>%
+  filter(tran_amount >= 2000 & tran_amount <= 10000) %>%
+  filter(cash_in_amount >= 0 & cash_out_amount >= 0) %>%
+  filter(status == "Validated")
+         
+#customer data, will need TIN from this dataset
+customer_data = read.csv("C:/Users/E103986/.../.../data-work/data/Customer Search Report.csv") %>% janitor::clean_names()
+
+#min corrections
+customer_data = customer_data %>%
+  mutate(acct = as.character(acct),
+         tin = as.character(tin))
+```
+
+
+```{r}
+# Read and Prep Historic Alerts ----
+# read data
+historic_alerts = readxl::read_excel("C:/Users/E103986/.../.../data-work/data/Alerts Report.xlsx", 
+col_types = "text") %>% 
+  janitor::clean_names()
+
+historic_alerts = historic_alerts %>%
+  mutate(created_date = as.Date(as.numeric(created_date), origin = "1899-12-30"))
+
+# filter for historic alerts
+historic_alerts = historic_alerts %>% filter(origin_detail == "Structured Transactions Weekly Scenario")
+historic_alerts = historic_alerts %>% filter(created_date >= "2023-03-01" & created_date <="2023-03-31" )
+
+```
+
+```{r}
+# Data Processing ---- 
+# making a merged table w relevant fields for TIN
+merged_data = transaction_data %>% left_join(
+  x= transaction_data,
+  y= customer_data %>% select(acct,tin),
+  by = c("acct_number" = "acct"))
+
+# filter for tran date period
+# merged_data = merged_data %>%
+#   filter(created_date >= "2023-02-02" & created_date <= "2023-03-31")
+# filter for the date review period
+review_period_start = as.Date("2023-03-01")
+review_period_end = as.Date("2023-03-31")
+lookback_weeks = 4
+
+#look back window 
+tran_data_period_start = review_period_start - weeks(lookback_weeks)
+tran_data_period_end = review_period_end
+
+# Filter for transactions within the transaction data period
+merged_data = merged_data %>% filter(created_date >= tran_data_period_start & created_date <= tran_data_period_end)
+
+```
+
+
+```{r}
+# aggregating to 9000 or more based on tin
+rsm_alerts = merged_data %>%
+  group_by(tin) %>%
+  summarise(sum_tran_amount = sum(tran_amount, na.rm = TRUE), count_tran = n(), .groups = "drop") %>%
+  filter(count_tran >= 2, sum_tran_amount >= 9000)
+
+```
+
+
+```{r}
+rsm_alerts$.in_model = rsm_alerts$tin %in% historic_alerts$tin_id
+rsm_alerts$.review_comment = "N/A" # Pre-populate
+historic_alerts$.replicated = historic_alerts$tin_id %in% rsm_alerts$tin
+historic_alerts$.review_comment = "N/A" # Pre-populate
+
+replication_summary = tribble(~measure, ~value,
+                              "RSM ALERTS", length(unique(rsm_alerts$tin)),
+                              "MODEL ALERTS", length(unique(historic_alerts$tin_id)),
+                              "PCNT RSM ALERTS IN HISTORIC",
+                              {length(unique(intersect(rsm_alerts$tin, historic_alerts$tin_id)))/
+                                  length(unique(rsm_alerts$tin))} %>% round(.,2),
+                              "PCNT HISTORIC IN RSM ALERTS",
+                              {length(unique(intersect(historic_alerts$tin_id, rsm_alerts$tin)))/
+                                  length(unique(historic_alerts$tin_id))} %>% round(.,2)
+)
+replication_summary
+```
+
+```{r}
+writexl::write_xlsx(
+  x = list(
+    "Summary" = replication_summary,
+    "RSM Alerts" = rsm_alerts,
+    "RSM Alerts UNQ" = dplyr::filter(rsm_alerts, !.in_model),
+    "RSM Alerts UNQ TXNS" = merged_data %>% 
+      filter(tin %in% filter(rsm_alerts, !.in_model)$tin),
+    "MDL Alerts" = historic_alerts,
+    "MDL Alerts UNQ" = filter(historic_alerts, !.replicated)
+  ),
+  path = ("C:/Users/E103986/.../.../data-work/logic-testing/output/BH018B-rule-rep-analysis.xlsx")
+)
+```

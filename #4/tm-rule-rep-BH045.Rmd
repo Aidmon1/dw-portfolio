@@ -1,0 +1,155 @@
+---
+title: "tm-rule-rep-BH045"
+output: html_document
+date: "2024-06-12"
+---
+# Rule Code: BH045  
+
+# Rule Title: Large Wire Transactions Conducted From or To Tax Havens
+
+# Rule Logic:
+Identify accounts with Incoming or Outgoing Wire Transfers in the amount of $10,000.00 or more within the last 5 days, that originated from or were sent to a country designated as a "Tax Haven".
+
+
+```{r}
+# Start-up ----
+library(tidyverse)
+library(magrittr)
+library(skimr)
+library(readxl)
+
+```
+
+```{r, warning=FALSE}
+# Get Data ---- 
+transaction_data = readRDS("C:/Users/E103986/.../.../data-work/data/prepd_abrigo-transaction-data.rds") %>% janitor::clean_names() # will need transaction amount from this data 
+
+# mini corrections 
+transaction_data = transaction_data %>%
+  filter(tran_amount >= 10000) %>%
+  filter(wire_type == c("Incoming","Outgoing")) %>%
+  mutate(created_date = as.Date(created_date),
+         tran_date = as.Date(tran_date),
+         acct_number = as.character(acct_number))
+#pivot_longer for countries and to get them into one field
+
+#customer data
+customer_data = read.csv("C:/Users/E103986/.../.../data-work/data/Customer Search Report.csv") %>% janitor::clean_names()
+ 
+# #min corrections
+customer_data = customer_data %>%
+  mutate(acct = as.character(acct))
+
+# keywords data will need the keywords
+keyword_data = read_csv("C:/Users/E103986/.../.../data-work/data/Keyword List 04_13_2023 13_24_41.csv") %>% janitor::clean_names()
+
+keyword_data = keyword_data %>%
+  filter(group == c("Tax Haven","Tax Havens")) %>%
+  filter(condition == "Include") %>% pivot_longer(cols = starts_with("keyword"), names_to = "keyword", values_to = "keyword_value")
+#lookback period of 7 days
+
+# Define the review period for March 
+review_period_start = as.Date("2023-03-01")
+review_period_end = as.Date("2023-03-31")
+
+# Define the lookback period
+lookback_period_start = review_period_start - days(7)
+lookback_period_end = review_period_end
+
+# Merge transaction data with customer data
+merged_data = transaction_data %>%
+  left_join(customer_data %>% select(acct, primary_tin), by = c("acct_number" = "acct"))
+
+# Define thresholds for different TIN codes
+business_thrhld = 25000
+personal_thrld = 10000
+other_thrhld = 10000
+
+# Assigning threshold based on TIN code
+merged_data = merged_data %>%
+  mutate(thresholds = case_when(
+    primary_tin == "F" ~ business_thrhld,
+    primary_tin == "S" ~ personal_thrld,
+    primary_tin == "N" ~ other_thrhld,
+    TRUE ~ NA_real_
+  ))
+# Filter transaction_data for the lookback period
+transaction_data = merged_data %>%
+  filter(created_date >= lookback_period_start & created_date <= lookback_period_end)
+
+# Define a function to check for tax havens
+check_tax_haven = function(row, keywords) {
+  fields_to_check = c(row$orig_fi_name, row$orig_fi_address,
+                       row$intermediary_fi_name, row$intermediary_fi_address,
+                       row$benf_fi_name, row$benf_fi_address,
+                       row$instructing_fi_name, row$instructing_fi_address)
+  fields_to_check = fields_to_check[!is.na(fields_to_check)]  # Remove NA values
+  any(sapply(keywords, function(keyword) any(str_detect(fields_to_check, keyword))))
+}
+
+```
+
+```{r}
+# Read and Prep Historic Alerts ----
+# read data
+historic_alerts = readxl::read_excel("C:/Users/E103986/.../.../data-work/data/Alerts Report.xlsx", 
+col_types = "text") %>% 
+  janitor::clean_names()
+
+historic_alerts = historic_alerts %>%
+  mutate(created_date = as.Date(as.numeric(created_date), origin = "1899-12-30"))
+
+# filter for historic alerts
+historic_alerts = historic_alerts %>% filter(origin_detail == "Large Wire Transactions Conducted From or To Tax Havens")
+historic_alerts = historic_alerts %>% filter(created_date >= review_period_start & created_date <= review_period_end)
+
+```
+
+```{r}
+# rule logic
+
+# Check if the transactions are from Tax Havens
+transaction_data = transaction_data %>%
+  rowwise() %>%
+  mutate(tax_havens = check_tax_haven(cur_data(), keyword_data$keyword_value)) %>%
+  ungroup()
+
+# Filter the transactions to keep only those from Tax Havens within the review period
+rsm_alerts = transaction_data %>%
+  filter(tax_havens == TRUE & created_date >= review_period_start & created_date <= review_period_end)
+
+```
+
+```{r}
+rsm_alerts$.in_model = rsm_alerts$acct_number %in% historic_alerts$account_number
+rsm_alerts$.review_comment = "N/A" # pre-populate
+historic_alerts$.replicated = historic_alerts$account_number %in% rsm_alerts$acct_number
+historic_alerts$.review_comment = "N/A" # pre-populate
+
+replication_summary = tribble(~measure, ~value,
+                              "RSM ALERTS", length(unique(rsm_alerts$acct_number)),
+                              "MODEL ALERTS", length(unique(historic_alerts$account_number)),
+                              "PCNT RSM ALERTS IN HISTORIC",
+                              {length(unique(intersect(rsm_alerts$acct_number, historic_alerts$account_number)))/
+                                  length(unique(rsm_alerts$acct_number))} %>% round(.,2),
+                              "PCNT HISTORIC IN RSM ALERTS",
+                              {length(unique(intersect(historic_alerts$account_number, rsm_alerts$acct_number)))/
+                                  length(unique(historic_alerts$account_number))} %>% round(.,2)
+)
+replication_summary
+```
+
+```{r}
+writexl::write_xlsx(
+  x = list(
+    "Summary" = replication_summary,
+    "RSM Alerts" = rsm_alerts,
+    "RSM Alerts UNQ" = dplyr::filter(rsm_alerts, !.in_model),
+    "RSM Alerts UNQ TXNS" = merged_data %>% 
+      filter(acct_number %in% filter(rsm_alerts, !.in_model)$acct_number),
+    "MDL Alerts" = historic_alerts,
+    "MDL Alerts UNQ" = filter(historic_alerts, !.replicated)
+  ),
+  path = ("C:/Users/E103986/.../.../data-work/logic-testing/output/BH045-rule-rep-analysis.xlsx")
+)
+```
